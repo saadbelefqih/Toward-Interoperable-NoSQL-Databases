@@ -1,0 +1,925 @@
+# 1. Raw Data Storage Component
+class DataStorage:
+    """Manages the storage of documents using a data access layer"""
+
+    def __init__(self, db, collection_name):
+        self.db = db
+        self.collection_name = collection_name
+
+    def insert_document(self, document: Dict) -> str:
+        """Insert a document and return its ID"""
+        result = self.db.insert_one(self.collection_name, document)
+        return str(result['inserted_id'])
+
+    def insert_many_documents(self, documents: List[Dict]) -> List[str]:
+        """Insert multiple documents and return their IDs"""
+        result = self.db.insert_many(self.collection_name, documents)
+        return [str(id) for id in result['inserted_ids']]
+
+    def get_document(self, doc_id: str) -> Dict:
+        """Retrieve a document by ID"""
+        return self.db.find_one(self.collection_name, {'_id': doc_id})
+
+    def get_all_documents(self, limit=None) -> List[Dict]:
+        """Retrieve all documents, with an optional limit"""
+        return self.db.find(self.collection_name, {}, limit=limit)
+
+    def update_document(self, doc_id: str, document: Dict) -> bool:
+        """Update a document"""
+        result = self.db.update_one(
+            self.collection_name,
+            {'_id': doc_id},
+            {'$set': document}
+        )
+        return result['modified_count'] > 0
+
+    def delete_document(self, doc_id: str) -> bool:
+        """Delete a document"""
+        result = self.db.delete_one(self.collection_name, {'_id': doc_id})
+        return result['deleted_count'] > 0
+
+# Create an instance of the DataStorage class, specifying the database and collection
+storage = DataStorage(dbTest, "test_collection")  # Using "test_collection" as an example
+
+# Test the insert_document method
+document = {"name": "Alice", "age": 30}
+doc_id = storage.insert_document(document)
+print(f"Inserted document with ID: {doc_id}")
+
+# 4. Test the get_document method
+retrieved_doc = storage.get_document(doc_id)
+print(f"Retrieved document: {retrieved_doc}")
+
+#Test the insert_many_documents method
+documents = [{"name": "Bob", "age": 25}, {"name": "Charlie", "age": 35}]
+doc_ids = storage.insert_many_documents(documents)
+print(f"Inserted documents with IDs: {doc_ids}")
+
+# Test the update_document method
+update_data = {"age": 31}
+success = storage.update_document(doc_id, update_data)
+print(f"Update successful: {success}")
+
+
+# Test the delete_document method
+success = storage.delete_document(doc_id)
+print(f"Delete successful: {success}")
+
+
+
+# Test the get_all_documents method
+all_docs = storage.get_all_documents()
+print(f"All documents: {all_docs}")
+
+# Verify deletion
+retrieved_doc = storage.get_document(doc_id)
+print(f"Document after deletion: {retrieved_doc}")
+
+# 2. Schema Profiling and Change Detection Component
+class SchemaProfiler:
+    """Analyzes document structures to detect schema patterns and changes"""
+
+    def __init__(self, db, collection_name):
+        self.db = db
+        self.collection_name = collection_name
+        self.schema_profiles_collection = "@schemaProfiles"
+
+    def extract_schema_from_document(self, document: Dict) -> Dict:
+        """Extract schema information from a single document"""
+        schema_info = {}
+
+        def process_field(path, value):
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    new_path = f"{path}.{k}" if path else k
+                    process_field(new_path, v)
+            elif isinstance(value, list):
+                if value and isinstance(value[0], dict):
+                    # For lists of objects, analyze the first item as representative
+                    for k, v in value[0].items():
+                        new_path = f"{path}.[].{k}" if path else f"[].{k}"
+                        process_field(new_path, v)
+                else:
+                    # For primitive arrays, just note the type
+                    schema_info[path] = {
+                        'type': 'array',
+                        'items_type': type(value[0]).__name__ if value else 'unknown'
+                    }
+            else:
+                # Handle primitive types
+                data_type = type(value).__name__
+                schema_info[path] = {'type': data_type}
+
+                # For strings, check if they're formatted as dates
+                if data_type == 'str':
+                    # Simple date pattern matching
+                    date_pattern = r'^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?'
+                    if re.match(date_pattern, value):
+                        schema_info[path]['format'] = 'date'
+
+        process_field('', document)
+        return schema_info
+
+    def profile_collection_schema(self) -> Dict:
+        """Generate a schema profile for the entire collection"""
+        start = time.time()
+        documents = self.db.find(self.collection_name, {}, limit=1000000000)  # Sample up to 1000 docs
+
+        # Track field occurrences and types
+        field_stats = defaultdict(lambda: {'count': 0, 'types': Counter()})
+        total_docs = 0
+
+        for doc in documents:
+            total_docs += 1
+            schema = self.extract_schema_from_document(doc)
+
+            for field, info in schema.items():
+                field_stats[field]['count'] += 1
+                field_stats[field]['types'][info['type']] += 1
+
+        # Calculate field prevalence and dominant types
+        schema_profile = {
+            'collection': self.collection_name,
+            'total_documents': total_docs,
+            'timestamp': datetime.now().isoformat(),
+            'fields': {}
+        }
+
+        for field, stats in field_stats.items():
+            prevalence = stats['count'] / total_docs if total_docs > 0 else 0
+            dominant_type = stats['types'].most_common(1)[0][0] if stats['types'] else 'unknown'
+
+            schema_profile['fields'][field] = {
+                'prevalence': prevalence,
+                'dominant_type': dominant_type,
+                'type_distribution': dict(stats['types'])
+            }
+
+        # Generate a version identifier
+        version = f"{int(time.time())}"
+        schema_profile['version'] = version
+
+        # Profiling time
+        print(f"Profiling time: {time.time() - start} seconds {total_docs} Document")
+
+
+        # Store the schema profile
+        self.db.insert_one(self.schema_profiles_collection, schema_profile)
+
+        return schema_profile
+
+    def detect_schema_changes(self) -> Tuple[bool, Dict]:
+        """Compare current schema with the latest profile to detect changes"""
+        # Get the most recent schema profile
+        latest_profile = self.db.find_one(
+            self.schema_profiles_collection,
+            {'collection': self.collection_name},
+            sort=[('timestamp', -1)]
+        )
+
+        if not latest_profile:
+            # No previous profile, so consider it a change
+            new_profile = self.profile_collection_schema()
+            return True, new_profile
+
+        # Generate current profile
+        current_profile = self.profile_collection_schema()
+
+        # Compare profiles to detect changes
+        changes = {
+            'new_fields': [],
+            'removed_fields': [],
+            'type_changes': []
+        }
+        print("Latest Profile:", latest_profile)
+        print("Current Profile:", current_profile)
+        print("Changes:", changes)
+        # Check for new and changed fields
+        for field, info in current_profile['fields'].items():
+            if field not in latest_profile['fields']:
+                changes['new_fields'].append(field)
+            elif info['dominant_type'] != latest_profile['fields'][field]['dominant_type']:
+                changes['type_changes'].append({
+                    'field': field,
+                    'old_type': latest_profile['fields'][field]['dominant_type'],
+                    'new_type': info['dominant_type']
+                })
+
+        # Check for removed fields
+        for field in latest_profile['fields']:
+            if field not in current_profile['fields']:
+                changes['removed_fields'].append(field)
+
+        # Determine if changes are significant
+        has_significant_changes = (
+            len(changes['new_fields']) > 0 or
+            len(changes['type_changes']) > 0 or
+            len(changes['removed_fields']) > 0
+        )
+
+        # Add change information to the current profile
+        current_profile['changes'] = changes
+        current_profile['previous_version'] = latest_profile['version']
+
+        # Update the stored profile if changes were detected
+        if has_significant_changes:
+            current_profile['version'] = f"{int(time.time())}"
+            self.db.insert_one(self.schema_profiles_collection, current_profile)
+
+        return has_significant_changes, current_profile
+
+# Assuming you have the InMemoryDatabase (dbTest) and SchemaProfiler class defined
+profilerTest = SchemaProfiler(dbTest, "test_collection")
+initial_profile  = profilerTest.profile_collection_schema()
+print("schema_profile:", initial_profile)
+# Introduce a schema change by inserting a document with a new field
+dbTest.insert_one("test_collection", {"name": "David", "age": 40, "new_field": "some_value"})
+# Test the get_all_documents method
+all_docs = storage.get_all_documents()
+print(f"All documents: {all_docs}")
+
+# c. Detect changes
+has_changes, current_profile = profilerTest.detect_schema_changes()
+print("Has Changes:", has_changes)
+print("Current Profile:", current_profile)
+
+# 3. Embedding-Based Vocabulary Mapping and Context Generation
+class VocabularyMapper:
+    """Maps document attributes to standardized vocabularies using embeddings"""
+
+    def __init__(self, db):
+        self.db = db
+        self.contexts_collection = "@contexts"
+        self.ontology_index_collection = "@ontologyIndex"
+
+        # Load SBERT model for semantic embeddings
+        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+
+        # Initialize FAISS index for similarity search
+        self.embedding_dim = self.model.get_sentence_embedding_dimension()
+        self.index = faiss.IndexFlatIP(self.embedding_dim)  # Inner product for cosine similarity
+
+        # Load or initialize ontology index
+        self.initialize_ontology_index()
+
+    def initialize_ontology_index(self):
+        """Initialize the ontology index with standard vocabulary terms"""
+        # Check if we already have an ontology index
+        if self.db.count_documents(self.ontology_index_collection, {}) > 0:
+            print("Loading existing ontology index...")
+            self._load_ontology_index()
+            return
+
+        print("Initializing ontology index with standard vocabularies...")
+
+        # Example vocabulary from Schema.org and FOAF
+        standard_terms = [
+            # Schema.org Person terms
+            {"term": "name", "uri": "http://schema.org/name", "domain": "schema.org"},
+            {"term": "givenName", "uri": "http://schema.org/givenName", "domain": "schema.org"},
+            {"term": "familyName", "uri": "http://xmlns.com/foaf/0.1/lastName", "domain": "foaf"},
+            {"term": "email", "uri": "http://schema.org/email", "domain": "schema.org"},
+            {"term": "telephone", "uri": "http://schema.org/telephone", "domain": "schema.org"},
+            {"term": "birthDate", "uri": "http://schema.org/birthDate", "domain": "schema.org"},
+            {"term": "address", "uri": "http://schema.org/address", "domain": "schema.org"},
+            {"term": "gender", "uri": "http://schema.org/gender", "domain": "schema.org"},
+            {"term":"user_id","uri": "http://schema.org/identifier", "domain": "schema.org"},
+
+            # Schema.org Address terms
+            {"term": "streetAddress", "uri": "http://schema.org/streetAddress", "domain": "schema.org"},
+            {"term": "addressLocality", "uri": "http://schema.org/addressLocality", "domain": "schema.org"},
+            {"term": "addressRegion", "uri": "http://schema.org/addressRegion", "domain": "schema.org"},
+            {"term": "postalCode", "uri": "http://schema.org/postalCode", "domain": "schema.org"},
+            {"term": "addressCountry", "uri": "http://schema.org/addressCountry", "domain": "schema.org"},
+            {"term": "addressCity", "uri": "http://schema.org/addressLocality", "domain": "schema.org"},
+            {"term": "addressState", "uri": "http://schema.org/addressRegion", "domain": "schema.org"},
+            {"term": "addressZip", "uri": "http://schema.org/postalCode", "domain": "schema.org"},
+
+            # Schema.org Organization terms
+            {"term": "organization", "uri": "http://schema.org/Organization", "domain": "schema.org"},
+            {"term": "legalName", "uri": "http://schema.org/legalName", "domain": "schema.org"},
+            {"term": "founder", "uri": "http://schema.org/founder", "domain": "schema.org"},
+            {"term": "foundingDate", "uri": "http://schema.org/foundingDate", "domain": "schema.org"},
+            {"term": "employee", "uri": "http://schema.org/employee", "domain": "schema.org"},
+
+            # Schema.org Product terms
+            {"term": "product", "uri": "http://schema.org/Product", "domain": "schema.org"},
+            {"term": "productID", "uri": "http://schema.org/productID", "domain": "schema.org"},
+            {"term": "price", "uri": "http://schema.org/price", "domain": "schema.org"},
+            {"term": "description", "uri": "http://schema.org/description", "domain": "schema.org"},
+            {"term": "brand", "uri": "http://schema.org/brand", "domain": "schema.org"},
+            {"term": "manufacturer", "uri": "http://schema.org/manufacturer", "domain": "schema.org"},
+            {"term": "category", "uri": "http://schema.org/category", "domain": "schema.org"},
+
+            {"term": "in_stock", "uri": "http://schema.org/category", "domain": "schema.org"},
+            {"term": "specs.weight", "uri": "http://schema.org/category", "domain": "schema.org"},
+            {"term": "specs.color", "uri": "http://schema.org/category", "domain": "schema.org"},
+            {"term": "specs.material", "uri": "http://schema.org/category", "domain": "schema.org"},
+
+            # Schema.org Order/Commerce terms
+            {"term": "order_id", "uri": "http://schema.org/orderNumber", "domain": "schema.org"},
+            {"term": "order", "uri": "http://schema.org/Order", "domain": "schema.org"},
+            {"term": "orderNumber", "uri": "http://schema.org/orderNumber", "domain": "schema.org"},
+            {"term": "orderDate", "uri": "http://schema.org/orderDate", "domain": "schema.org"},
+            {"term": "orderStatus", "uri": "http://schema.org/orderStatus", "domain": "schema.org"},
+            {"term": "paymentMethod", "uri": "http://schema.org/paymentMethod", "domain": "schema.org"},
+            {"term": "totalPrice", "uri": "http://schema.org/totalPrice", "domain": "schema.org"},
+            {"term": "total", "uri": "http://schema.org/totalPrice", "domain": "schema.org"},
+            {"term": "status", "uri": "http://schema.org/orderStatus", "domain": "schema.org"},
+
+            # FOAF terms
+            {"term": "person", "uri": "http://xmlns.com/foaf/0.1/Person", "domain": "foaf"},
+            {"term": "firstName", "uri": "http://xmlns.com/foaf/0.1/firstName", "domain": "foaf"},
+            {"term": "lastName", "uri": "http://xmlns.com/foaf/0.1/lastName", "domain": "foaf"},
+            {"term": "mbox", "uri": "http://xmlns.com/foaf/0.1/mbox", "domain": "foaf"},
+            {"term": "phone", "uri": "http://xmlns.com/foaf/0.1/phone", "domain": "foaf"}
+        ]
+
+        # Calculate embeddings for all terms
+        terms = [term['term'] for term in standard_terms]
+        embeddings = self.model.encode(terms, convert_to_numpy=True)
+
+        # Store embeddings in FAISS index
+        self.index.add(embeddings)
+
+        # Store term data in the database
+        for i, term_data in enumerate(standard_terms):
+            term_data['embedding_id'] = i
+            self.db.insert_one(self.ontology_index_collection, term_data)
+
+    def _load_ontology_index(self):
+        """Load existing ontology index from database"""
+        terms = self.db.find(self.ontology_index_collection, {})
+
+        # Get the maximum embedding_id to determine index size
+        max_id = -1
+        term_count = 0
+        for term in terms:
+            max_id = max(max_id, term.get('embedding_id', -1))
+            term_count += 1
+
+        if term_count == 0:
+            print("No terms found in ontology index. Will initialize from scratch.")
+            self.initialize_ontology_index()
+            return
+
+        # Reset the index
+        self.index = faiss.IndexFlatIP(self.embedding_dim)
+
+        # Load embeddings for all terms
+        terms = self.db.find(self.ontology_index_collection, {})
+        term_list = []
+        embeddings = []
+
+        for term in terms:
+            term_text = term['term']
+            term_list.append(term_text)
+            # Re-encode the term to get its embedding
+            embedding = self.model.encode(term_text, convert_to_numpy=True)
+            embeddings.append(embedding)
+
+        # Convert to numpy array and add to index
+        if embeddings:
+            embeddings_array = np.vstack(embeddings)
+            self.index.add(embeddings_array)
+            print(f"Loaded {len(embeddings)} terms into ontology index")
+
+    def preprocess_attribute(self, attribute: str) -> str:
+        """Normalize attribute keys for better matching"""
+        # Convert camelCase or PascalCase to lowercase with spaces
+        s1 = re.sub('(.)([A-Z][a-z]+)', r'\1 \2', attribute)
+        s2 = re.sub('([a-z0-9])([A-Z])', r'\1 \2', s1)
+
+        # Remove special characters and convert to lowercase
+        s3 = re.sub(r'[^a-zA-Z0-9\s]', ' ', s2).lower()
+
+        # Remove extra spaces
+        s4 = re.sub(r'\s+', ' ', s3).strip()
+
+        return s4
+
+    def map_attribute_to_vocabulary(self, attribute: str) -> Dict:
+        """Map a single attribute to standard vocabulary terms"""
+        # Preprocess the attribute
+        normalized_attr = self.preprocess_attribute(attribute)
+
+        # Get embedding for the attribute
+        embedding = self.model.encode(normalized_attr, convert_to_numpy=True).reshape(1, -1)
+
+        # Find the most similar terms
+        k = 5  # Number of similar terms to retrieve
+        scores, indices = self.index.search(embedding, k)
+
+        # Get terms from indices
+        similar_terms = []
+        for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
+            if idx >= 0:  # Valid index
+                term_data = self.db.find_one(
+                    self.ontology_index_collection,
+                    {'embedding_id': int(idx)}
+                )
+
+                if term_data:
+                    similar_terms.append({
+                        'term': term_data['term'],
+                        'uri': term_data['uri'],
+                        'domain': term_data['domain'],
+                        'similarity': float(score)
+                    })
+
+        # Return top match if similarity is above threshold
+        if similar_terms and similar_terms[0]['similarity'] >= 0.75:
+            top_match = similar_terms[0]
+            top_match['original_attribute'] = attribute
+            top_match['normalized_attribute'] = normalized_attr
+            return top_match
+
+        # No good match found, return a default mapping
+        return {
+            'original_attribute': attribute,
+            'normalized_attribute': normalized_attr,
+            'term': attribute,
+            'uri': f"https://example.org/vocab#{attribute}",
+            'domain': 'default',
+            'similarity': 0.0
+        }
+
+    def infer_datatype(self, value: Any) -> str:
+        """Infer XML Schema datatype from a value"""
+        if value is None:
+            return "http://www.w3.org/2001/XMLSchema#nil"
+
+        value_type = type(value)
+
+        if value_type == bool:
+            return "http://www.w3.org/2001/XMLSchema#boolean"
+        elif value_type == int:
+            return "http://www.w3.org/2001/XMLSchema#integer"
+        elif value_type == float:
+            return "http://www.w3.org/2001/XMLSchema#decimal"
+        elif value_type == str:
+            # Check if string is a date/datetime
+            date_pattern = r'^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?'
+            if re.match(date_pattern, value):
+                if 'T' in value:
+                    return "http://www.w3.org/2001/XMLSchema#dateTime"
+                else:
+                    return "http://www.w3.org/2001/XMLSchema#date"
+            return "http://www.w3.org/2001/XMLSchema#string"
+        elif value_type == list:
+            return "http://www.w3.org/2001/XMLSchema#array"
+        elif value_type == dict:
+            return "http://www.w3.org/2001/XMLSchema#object"
+        else:
+            return "http://www.w3.org/2001/XMLSchema#string"
+
+    def generate_context_for_schema(self, schema_profile: Dict) -> Dict:
+        """Generate a JSON-LD context from a schema profile"""
+        context = {
+            "@context": {
+                "xsd": "http://www.w3.org/2001/XMLSchema#",
+                "schema": "http://schema.org/",
+                "foaf": "http://xmlns.com/foaf/0.1/",
+                "ex": "https://example.org/vocab#"
+            }
+        }
+
+        mappings = {}
+
+        for field, info in schema_profile['fields'].items():
+            # Skip internal fields
+            if field.startswith('_'):
+                continue
+
+            # Map field to vocabulary
+            mapping = self.map_attribute_to_vocabulary(field)
+
+            # Get a sample value to infer datatype
+            sample_value = self._get_sample_value(schema_profile['collection'], field)
+            datatype = self.infer_datatype(sample_value) if sample_value is not None else None
+
+            # Add mapping to context
+            if mapping['similarity'] >= 0.75:
+                # Use standard vocabulary term
+                uri = mapping['uri']
+
+                if datatype:
+                    mappings[field] = {
+                        "@id": uri,
+                        "@type": datatype
+                    }
+                else:
+                    mappings[field] = uri
+            else:
+                # Use default namespace with original term
+                mappings[field] = {
+                    "@id": f"ex:{field}",
+                    "@type": datatype if datatype else "xsd:string"
+                }
+
+        # Add mappings to context
+        context["@context"].update(mappings)
+
+        # Add metadata
+        context["@metadata"] = {
+            "collection": schema_profile['collection'],
+            "version": schema_profile['version'],
+            "generated": datetime.now().isoformat(),
+            "profile_source": schema_profile['version']
+        }
+
+        if 'previous_version' in schema_profile:
+            context["@metadata"]["previous_version"] = schema_profile['previous_version']
+
+        if 'changes' in schema_profile:
+            context["@metadata"]["changes"] = schema_profile['changes']
+
+        return context
+
+    def _get_sample_value(self, collection: str, field: str) -> Any:
+        """Get a representative value for a field to infer its datatype"""
+        query = {}
+        # Handle nested fields
+        if '.' in field:
+            parts = field.split('.')
+            # For simple nested fields
+            if len(parts) == 2:
+                query = {parts[0]: {"$exists": True}}
+            # Skip complex nested paths for simplicity
+            else:
+                return None
+        else:
+            query = {field: {"$exists": True}}
+
+        doc = self.db.find_one(collection, query)
+
+        if not doc:
+            return None
+
+        # Extract value from potentially nested field
+        if '.' in field:
+            parts = field.split('.')
+            value = doc
+            for part in parts:
+                if part == '[]' and isinstance(value, list) and value:
+                    value = value[0]
+                elif isinstance(value, dict) and part in value:
+                    value = value[part]
+                else:
+                    return None
+            return value
+        else:
+            return doc.get(field)
+
+    def store_context(self, context: Dict) -> str:
+        """Store a context in the contexts collection and return its ID"""
+        result = self.db.insert_one(self.contexts_collection, context)
+        return str(result['inserted_id'])
+
+    def get_context(self, context_id: str) -> Dict:
+        """Retrieve a context by ID"""
+        return self.db.find_one(self.contexts_collection, {'_id': context_id})
+
+    def get_latest_context_for_collection(self, collection: str) -> Dict:
+        """Get the latest context for a collection"""
+        return self.db.find_one(
+            self.contexts_collection,
+            {'@metadata.collection': collection},
+            sort=[('_id', -1)]
+        )
+
+# 4. Context Registry and Versioning
+class ContextRegistry:
+    """Manages versioned semantic contexts and their relationships"""
+
+    def __init__(self, db):
+        self.db = db
+        self.contexts_collection = "@contexts"
+        self.doc_contexts_collection = "@docContexts"
+
+    def register_context(self, context: Dict) -> str:
+        """Register a new context version"""
+        # Add creation timestamp if not present
+        if '@metadata' not in context:
+            context['@metadata'] = {}
+
+        context['@metadata']['created'] = datetime.now().isoformat()
+
+        # Insert the context
+        result = self.db.insert_one(self.contexts_collection, context)
+        context_id = str(result['inserted_id'])
+
+        return context_id
+
+    def get_context(self, context_id: str) -> Dict:
+        """Retrieve a context by ID"""
+        return self.db.find_one(self.contexts_collection, {'_id': context_id})
+
+    def list_contexts(self, collection: str = None) -> List[Dict]:
+        """List all contexts, optionally filtered by collection"""
+        query = {}
+        if collection:
+            query = {'@metadata.collection': collection}
+
+        return self.db.find(self.contexts_collection, query)
+
+    def get_context_history(self, collection: str) -> List[Dict]:
+        """Get the version history of contexts for a collection"""
+        contexts = self.db.find(
+            self.contexts_collection,
+            {'@metadata.collection': collection},
+            sort=[('@metadata.created', 1)]
+        )
+
+        # Extract key information for version history
+        history = []
+        for ctx in contexts:
+            history.append({
+                'id': ctx['_id'],
+                'version': ctx['@metadata'].get('version', 'unknown'),
+                'created': ctx['@metadata'].get('created', 'unknown'),
+                'previous_version': ctx['@metadata'].get('previous_version', None),
+                'changes': ctx['@metadata'].get('changes', {})
+            })
+
+        return history
+    def get_latest_context_for_collection(self, collection: str) -> Dict:
+        """Get the latest context for a collection"""
+        return self.db.find_one(
+            self.contexts_collection,
+            {'@metadata.collection': collection},
+            sort=[('_id', -1)]
+        )
+
+    def associate_document_with_context(self, doc_id: str, collection: str, context_id: str) -> bool:
+        """Associate a document with a specific context version"""
+        mapping = {
+            'doc_id': doc_id,
+            'collection': collection,
+            'context_id': context_id,
+            'mapped_at': datetime.now().isoformat()
+        }
+
+        # Check if mapping already exists
+        existing = self.db.find_one(
+            self.doc_contexts_collection,
+            {'doc_id': doc_id, 'collection': collection}
+        )
+
+        if existing:
+            # Update existing mapping
+            result = self.db.update_one(
+                self.doc_contexts_collection,
+                {'_id': existing['_id']},
+                {'$set': {'context_id': context_id, 'mapped_at': mapping['mapped_at']}}
+            )
+            return result['modified_count'] > 0
+        else:
+            # Create new mapping
+            result = self.db.insert_one(self.doc_contexts_collection, mapping)
+            return result['inserted_id'] is not None
+
+    def get_document_context(self, doc_id: str, collection: str) -> str:
+        """Get the context ID associated with a document"""
+        mapping = self.db.find_one(
+            self.doc_contexts_collection,
+            {'doc_id': doc_id, 'collection': collection}
+        )
+
+        return mapping['context_id'] if mapping else None
+
+    def update_documents_to_latest_context(self, collection: str, context_id: str) -> int:
+        """Update all documents in a collection to use the latest context"""
+        result = self.db.update_many(
+            self.doc_contexts_collection,
+            {'collection': collection},
+            {'$set': {'context_id': context_id, 'mapped_at': datetime.now().isoformat()}}
+        )
+
+        return result['modified_count']
+
+# 5. Mapping Management
+class MappingManager:
+    """Manages the associations between documents and their semantic contexts"""
+
+    def __init__(self, db, context_registry):
+        self.db = db
+        self.context_registry = context_registry
+        self.doc_contexts_collection = "@docContexts"
+
+    def register_document_mapping(self, doc_id: str, collection: str) -> bool:
+        """Register a new document with the latest context for its collection"""
+        # Get latest context for the collection
+        latest_context = self.context_registry.get_latest_context_for_collection(collection)
+
+        if not latest_context:
+            # No context available for this collection yet
+            return False
+
+        # Associate document with the context
+        return self.context_registry.associate_document_with_context(
+            doc_id, collection, latest_context['_id']
+        )
+
+    def update_document_mapping(self, doc_id: str, collection: str, context_id: str = None) -> bool:
+        """Update the context mapping for a document"""
+        if not context_id:
+            # If no context provided, use the latest
+            latest_context = self.context_registry.get_latest_context_for_collection(collection)
+            if not latest_context:
+                return False
+            context_id = latest_context['_id']
+
+        # Associate document with the context
+        return self.context_registry.associate_document_with_context(
+            doc_id, collection, context_id
+        )
+
+    def batch_update_mappings(self, collection: str, context_id: str = None) -> int:
+        """Update all documents in a collection to use a specific context"""
+        if not context_id:
+            # If no context provided, use the latest
+            latest_context = self.context_registry.get_latest_context_for_collection(collection)
+            if not latest_context:
+                return 0
+            context_id = latest_context['_id']
+
+        # Update all documents in the collection
+        return self.context_registry.update_documents_to_latest_context(collection, context_id)
+
+    def get_document_context_id(self, doc_id: str, collection: str) -> str:
+        """Get the context ID associated with a document"""
+        return self.context_registry.get_document_context(doc_id, collection)
+
+    def get_unmapped_documents(self, collection: str) -> List[str]:
+        """Get list of document IDs that don't have context mappings"""
+        # Get all documents in the collection
+        all_docs = self.db.find(collection, {}, {'_id': 1})
+        all_doc_ids = [doc['_id'] for doc in all_docs]
+
+        # Get all mapped documents for the collection
+        mapped_docs = self.db.find(
+            self.doc_contexts_collection,
+            {'collection': collection},
+            {'doc_id': 1}
+        )
+        mapped_doc_ids = [doc['doc_id'] for doc in mapped_docs]
+
+        # Find the difference - documents without mappings
+        unmapped_doc_ids = set(all_doc_ids) - set(mapped_doc_ids)
+
+        return list(unmapped_doc_ids)
+
+# 6. JSON-LD Reconstruction Service
+class JsonLdService:
+    """Reconstructs JSON-LD documents by combining raw data with context information"""
+
+    def __init__(self, db, mapping_manager):
+        self.db = db
+        self.mapping_manager = mapping_manager
+
+    def enrich_document(self, doc_id: str, collection: str) -> Dict:
+        """Enrich a document with its associated context to create JSON-LD"""
+        # Get the raw document
+        raw_doc = self.db.find_one(collection, {'_id': doc_id})
+
+        if not raw_doc:
+            return None
+
+        # Get the context ID for this document
+        context_id = self.mapping_manager.get_document_context_id(doc_id, collection)
+
+        if not context_id:
+            # No context mapping found, use the latest context
+            latest_context = self.db.find_one(
+                "@contexts",
+                {'@metadata.collection': collection},
+                sort=[('_id', -1)]
+            )
+
+            if not latest_context:
+                # No context available for this collection
+                return raw_doc
+
+            context = latest_context['@context']
+        else:
+            # Get the specific context
+            context_doc = self.db.find_one("@contexts", {'_id': context_id})
+
+            if not context_doc:
+                # Context not found
+                return raw_doc
+
+            context = context_doc['@context']
+
+        # Create JSON-LD document
+        jsonld_doc = raw_doc.copy()
+        jsonld_doc['@context'] = context
+
+        return jsonld_doc
+
+    def enrich_collection(self, collection: str, limit: int = None) -> List[Dict]:
+        """Enrich all documents in a collection with their contexts"""
+        # Get raw documents
+        raw_docs = self.db.find(collection, {}, limit=limit)
+
+        enriched_docs = []
+        for doc in raw_docs:
+            enriched_doc = self.enrich_document(doc['_id'], collection)
+            if enriched_doc:
+                enriched_docs.append(enriched_doc)
+
+        return enriched_docs
+
+    def export_as_jsonld(self, doc_id: str, collection: str, output_file: str = None) -> Dict:
+        """Export a document as JSON-LD, optionally saving to a file"""
+        jsonld_doc = self.enrich_document(doc_id, collection)
+
+        if not jsonld_doc:
+            return None
+
+        if output_file:
+            with open(output_file, 'w') as f:
+                json.dump(jsonld_doc, f, indent=2)
+
+        return jsonld_doc
+
+# Main Framework Class
+class SemanticEnrichmentFramework:
+    """Main framework class integrating all components"""
+
+    def __init__(self, db_client=None):
+        """Initialize the framework with a database client"""
+        # If no client is provided, use in-memory database
+        self.db = db_client if db_client else InMemoryDatabase()
+
+        # Initialize components
+        self.vocabulary_mapper = VocabularyMapper(self.db)
+        self.context_registry = ContextRegistry(self.db)
+        self.mapping_manager = MappingManager(self.db, self.context_registry)
+        self.jsonld_service = JsonLdService(self.db, self.mapping_manager)
+
+        # Component caches
+        self.storage_components = {}
+        self.schema_profilers = {}
+
+    def get_data_storage(self, collection_name: str) -> DataStorage:
+        """Get or create a DataStorage component for a collection"""
+        if collection_name not in self.storage_components:
+            self.storage_components[collection_name] = DataStorage(self.db, collection_name)
+        return self.storage_components[collection_name]
+
+    def get_schema_profiler(self, collection_name: str) -> SchemaProfiler:
+        """Get or create a SchemaProfiler component for a collection"""
+        if collection_name not in self.schema_profilers:
+            self.schema_profilers[collection_name] = SchemaProfiler(self.db, collection_name)
+        return self.schema_profilers[collection_name]
+
+    def process_document(self, document: Dict, collection_name: str) -> str:
+        """Process a new document - store and create semantic mappings"""
+        # Store the document
+        storage = self.get_data_storage(collection_name)
+        doc_id = storage.insert_document(document)
+
+        # Associate with context
+        self.mapping_manager.register_document_mapping(doc_id, collection_name)
+
+        return doc_id
+
+    def process_collection(self, collection_name: str) -> Dict:
+        """Process an entire collection - profile schema and create contexts"""
+        # Profile the collection schema
+        profiler = self.get_schema_profiler(collection_name)
+        has_changes, schema_profile = profiler.detect_schema_changes()
+
+        if has_changes:
+            # Generate a new context based on the schema
+            context = self.vocabulary_mapper.generate_context_for_schema(schema_profile)
+
+            # Register the context
+            context_id = self.context_registry.register_context(context)
+
+            # Update document mappings to use the new context
+            updated_count = self.mapping_manager.batch_update_mappings(collection_name, context_id)
+
+            return {
+                'collection': collection_name,
+                'changes_detected': True,
+                'context_id': context_id,
+                'updated_documents': updated_count
+            }
+
+        return {
+            'collection': collection_name,
+            'changes_detected': False
+        }
+
+    def get_document_as_jsonld(self, doc_id: str, collection_name: str) -> Dict:
+        """Get a document enriched with JSON-LD context"""
+        return self.jsonld_service.enrich_document(doc_id, collection_name)
+
+
+
+if __name__ == "__main__":
+    main()
+ 
