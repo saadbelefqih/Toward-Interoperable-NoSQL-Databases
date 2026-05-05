@@ -1,0 +1,10 @@
+Domain,Documents,Time_seconds,Memory_MB,Docs_per_second
+E-Commerce,1000,0.03,0.00,37759.31
+E-Commerce,10000,0.25,0.00,40794.75
+E-Commerce,100000,3.04,0.00,32850.50
+IoT Telemetry,1000,0.02,0.00,42302.61
+IoT Telemetry,10000,0.24,0.00,41790.92
+IoT Telemetry,100000,3.08,0.21,32476.28
+Scientific Publications,1000,0.04,0.00,24077.24
+Scientific Publications,10000,0.72,0.00,13981.67
+Scientific Publications,100000,4.15,1.51,24104.74

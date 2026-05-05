@@ -1,0 +1,5 @@
+Domain,Precision,Recall,F1-score,Accuracy
+E-Commerce,0.97,0.95,0.96,0.94
+IoT Telemetry,0.96,0.91,0.94,0.91
+Scientific Publications,0.93,0.96,0.94,0.91
+Average,0.95,0.94,0.95,0.92
