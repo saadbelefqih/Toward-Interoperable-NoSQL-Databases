@@ -1,0 +1,52 @@
+{
+  "project": "Toward Interoperable NoSQL Databases",
+  "task": "Semantic enrichment of document-oriented NoSQL collections with JSON-LD",
+  "random_seed": 42,
+  "datasets": {
+    "ecommerce": {
+      "type": "synthetic",
+      "description": "Synthetic MongoDB transactional dataset with users, products, and orders",
+      "size_variants": [1000, 10000, 100000]
+    },
+    "iot_telemetry": {
+      "type": "real-world public dataset",
+      "source": "Environmental Sensor Telemetry Data",
+      "url": "https://www.kaggle.com/datasets/garystafford/environmental-sensor-data-132k",
+      "size_variants": [1000, 10000, 100000]
+    },
+    "scientific_publications": {
+      "type": "real-world public dataset",
+      "source": "arXiv Dataset",
+      "url": "https://www.kaggle.com/datasets/Cornell-University/arxiv",
+      "size_variants": [1000, 10000, 100000]
+    }
+  },
+  "semantic_alignment": {
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "similarity_metric": "cosine_similarity",
+    "acceptance_threshold": 0.75,
+    "reference_vocabularies": ["Schema.org", "FOAF"]
+  },
+  "baselines": [
+    "TF-IDF cosine similarity",
+    "Jaccard similarity",
+    "Levenshtein distance"
+  ],
+  "metrics": [
+    "precision",
+    "recall",
+    "f1_score",
+    "accuracy",
+    "ontology_linking_coverage",
+    "schema_profiling_time",
+    "memory_usage",
+    "throughput"
+  ],
+  "execution_environment": {
+    "cpu": "Intel(R) Core(TM) i7-6700 CPU @ 3.40GHz",
+    "ram": "16 GB",
+    "gpu": "NVIDIA NVS 310",
+    "dbms": "MongoDB Community Edition",
+    "execution_mode": "single-machine"
+  }
+}
