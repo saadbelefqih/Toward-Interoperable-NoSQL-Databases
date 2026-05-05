@@ -1,0 +1,13 @@
+Domain,Method,Precision_mean,Precision_sd,Recall_mean,Recall_sd,F1_mean,F1_sd,Accuracy_mean,Accuracy_sd
+E-Commerce,SBERT proposed,0.97,0.01,0.95,0.03,0.96,0.01,0.94,0.02
+E-Commerce,TF-IDF cosine,0.74,0.04,1.00,0.00,0.85,0.03,0.75,0.04
+E-Commerce,Jaccard,0.91,0.02,1.00,0.00,0.95,0.01,0.93,0.02
+E-Commerce,Levenshtein,0.93,0.00,1.00,0.00,0.96,0.00,0.94,0.00
+IoT Telemetry,SBERT proposed,0.96,0.02,0.91,0.02,0.94,0.02,0.91,0.02
+IoT Telemetry,TF-IDF cosine,0.77,0.05,0.96,0.02,0.85,0.03,0.76,0.05
+IoT Telemetry,Jaccard,0.83,0.05,0.96,0.02,0.89,0.03,0.83,0.04
+IoT Telemetry,Levenshtein,0.88,0.03,0.92,0.03,0.90,0.02,0.86,0.02
+Scientific Publications,SBERT proposed,0.93,0.02,0.96,0.02,0.94,0.02,0.91,0.02
+Scientific Publications,TF-IDF cosine,0.81,0.02,1.00,0.00,0.90,0.01,0.82,0.02
+Scientific Publications,Jaccard,0.85,0.02,1.00,0.00,0.92,0.01,0.86,0.02
+Scientific Publications,Levenshtein,0.87,0.02,1.00,0.00,0.93,0.01,0.88,0.02
