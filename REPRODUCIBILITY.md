@@ -145,6 +145,8 @@ The vocabulary alignment evaluation uses manually curated reference mappings for
 
 Metrics are computed using 10-fold stratified bootstrap resampling (80% sample per fold) to produce stable mean and standard deviation estimates.
 
+The complete annotation file is available at gold_standard.json in the root of this repository. Every entry is derived directly from GroundTruthGenerator.schema_org_mappings, GROUND_TRUTH, and GROUND_TRUTH_EVOLUTION in JSONLD.ipynb and can be verified against those constants.
+
 **Limitation acknowledged in the manuscript:** the reference mappings are curated by the authors and have not been subjected to independent inter-annotator agreement scoring. This is an identified direction for future work.
 
 ---
