@@ -139,16 +139,24 @@ The same pipeline is applied to every dataset:
 
 ---
 
-## Gold-standard reference mappings
-
-The vocabulary alignment evaluation uses manually curated reference mappings for each domain. For each dataset, attribute paths were independently assessed and either assigned to the most appropriate ontology URI (positive) or classified as unmappable (assigned to the local fallback namespace).
-
-Metrics are computed using 10-fold stratified bootstrap resampling (80% sample per fold) to produce stable mean and standard deviation estimates.
-
-The complete annotation file is available at gold_standard.json in the root of this repository. Every entry is derived directly from GroundTruthGenerator.schema_org_mappings, GROUND_TRUTH, and GROUND_TRUTH_EVOLUTION in JSONLD.ipynb and can be verified against those constants.
-
-**Limitation acknowledged in the manuscript:** the reference mappings are curated by the authors and have not been subjected to independent inter-annotator agreement scoring. This is an identified direction for future work.
-
+## Gold-standard annotation file
+ 
+The vocabulary alignment evaluation uses manually curated reference mappings
+stored in **`gold_standard.json`** at the root of this repository.
+ 
+The file contains 73 annotated entries across three collections (users,
+products, orders), covering base fields, schema evolution fields, negative
+test cases, and field name variation cases. Every entry records:
+ 
+- `field` — the exact attribute name as it appears in the generated documents
+- `expected_uri` — the ontology URI the framework should map it to (`null` for unmappable fields)
+- `expected_type` — the XSD datatype inferred from representative values
+- `category` — `positive`, `medium`, `negative`, or `evolution`
+- `note` — the mapping rationale
+All entries are traceable to three source locations in the original notebook:
+`GroundTruthGenerator.schema_org_mappings`, `GROUND_TRUTH`, and
+`GROUND_TRUTH_EVOLUTION`.
+ 
 ---
 
 ## Known issues fixed in this version
