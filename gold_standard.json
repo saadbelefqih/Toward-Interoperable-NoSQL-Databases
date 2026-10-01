@@ -101,7 +101,33 @@
         {"field": "estimated_delivery","expected_uri": null, "expected_type": null, "category": "evolution", "note": "Logistics date; no ontology equivalent in index"}
       ]
     }
-  }
+  },
 
+  "negative_test_cases": {
+    "description": "Exact fields from GroundTruthGenerator.generate_test_cases() negative_cases list. SBERT must NOT map these — any mapping above 0.75 is a false positive.",
+    "entries": [
+      {"field": "xyz_random_field",   "expected_uri": null, "expected_type": null, "category": "negative", "note": "Random nonsense token"},
+      {"field": "internal_system_id", "expected_uri": null, "expected_type": null, "category": "negative", "note": "Internal system identifier"},
+      {"field": "temp_data",          "expected_uri": null, "expected_type": null, "category": "negative", "note": "Temporary data marker"},
+      {"field": "cache_key",          "expected_uri": null, "expected_type": null, "category": "negative", "note": "Caching infrastructure key"},
+      {"field": "session_token",      "expected_uri": null, "expected_type": null, "category": "negative", "note": "Authentication session token"},
+      {"field": "debug_info",         "expected_uri": null, "expected_type": null, "category": "negative", "note": "Debug-only payload"}
+    ]
+  },
+
+  "field_variations": {
+    "description": "Alternate field name forms from GroundTruthGenerator.field_variations. Tests preprocess_attribute() normalisation — each variant must resolve to the same URI as its canonical form.",
+    "entries": [
+      {"variant": "firstName",    "canonical": "first_name", "expected_uri": "http://xmlns.com/foaf/0.1/firstName", "expected_type": "xsd:string"},
+      {"variant": "givenName",    "canonical": "first_name", "expected_uri": "http://xmlns.com/foaf/0.1/firstName", "expected_type": "xsd:string"},
+      {"variant": "lastName",     "canonical": "last_name",  "expected_uri": "http://xmlns.com/foaf/0.1/lastName",  "expected_type": "xsd:string"},
+      {"variant": "familyName",   "canonical": "last_name",  "expected_uri": "http://xmlns.com/foaf/0.1/lastName",  "expected_type": "xsd:string"},
+      {"variant": "emailAddress", "canonical": "email",      "expected_uri": "http://schema.org/email",             "expected_type": "xsd:string"},
+      {"variant": "phoneNumber",  "canonical": "phone",      "expected_uri": "http://xmlns.com/foaf/0.1/phone",     "expected_type": "xsd:string"},
+      {"variant": "productID",    "canonical": "product_id", "expected_uri": "http://schema.org/productID",         "expected_type": "xsd:string"},
+      {"variant": "orderID",      "canonical": "order_id",   "expected_uri": "http://schema.org/orderNumber",       "expected_type": "xsd:string"},
+      {"variant": "orderNumber",  "canonical": "order_id",   "expected_uri": "http://schema.org/orderNumber",       "expected_type": "xsd:string"}
+    ]
+  }
 
 }
